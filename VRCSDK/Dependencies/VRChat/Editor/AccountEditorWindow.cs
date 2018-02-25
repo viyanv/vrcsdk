@@ -139,7 +139,7 @@ namespace VRC
 
 			if(!APIUser.IsLoggedInWithCredentials && ApiCredentials.Load() )
             {
-				APIUser.Login( null, null );
+				APIUser.Login((user) => AnalyticsSDK.LoggedInUserChanged(user), null );
             }
 
             clientInstallPath = SDKClientUtilities.GetSavedVRCInstallPath();
@@ -355,6 +355,7 @@ namespace VRC
                     error = null;
                     storedUsername = username;
                     storedPassword = password;
+                    AnalyticsSDK.LoggedInUserChanged(user);
                 },
                 delegate (string message)
                 {

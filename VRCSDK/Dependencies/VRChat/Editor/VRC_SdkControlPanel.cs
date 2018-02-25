@@ -57,7 +57,6 @@ public class VRC_SdkControlPanel : EditorWindow
     Dictionary<Object, List<string>> GUIWarnings = new Dictionary<Object, List<string>>();
     Dictionary<Object, List<string>> GUIInfos = new Dictionary<Object, List<string>>();
     Dictionary<Object, List<string>> GUILinks = new Dictionary<Object, List<string>>();
-    Dictionary<VRCSDK2.VRC_AvatarDescriptor, bool> displayActive = new Dictionary<VRCSDK2.VRC_AvatarDescriptor, bool>();
 
     void AddToReport(Dictionary<Object, List<string>> report, Object subject, string output)
     {
@@ -145,7 +144,7 @@ public class VRC_SdkControlPanel : EditorWindow
 
         ShowBuildControls();
 
-        window.Repaint();
+        //window.Repaint();
     }
 
     void ShowBuildControls()
@@ -222,29 +221,21 @@ public class VRC_SdkControlPanel : EditorWindow
         {
             GUILayout.Label("Avatar Options", EditorStyles.boldLabel);
             scrollPos = EditorGUILayout.BeginScrollView(scrollPos);
-            if (!checkedForIssues)
-                foreach (var av in avatars)
+            foreach (var av in avatars)
+            {
+                EditorGUI.BeginChangeCheck();
+
+                EditorGUILayout.Space();
+                OnGUIAvatarCheck(av);
+
+                OnGUIAvatar(av);
+
+                if (EditorGUI.EndChangeCheck())
                 {
-                    EditorGUI.BeginChangeCheck();
-
-                    EditorGUILayout.Space();
-                    OnGUIAvatarCheck(av);
-
-                    OnGUIAvatar(av);
-
-                    if (EditorGUI.EndChangeCheck())
-                    {
-                        EditorUtility.SetDirty(av);
-                        UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(UnityEditor.SceneManagement.EditorSceneManager.GetActiveScene());
-                    }
+                    EditorUtility.SetDirty(av);
+                    UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(UnityEditor.SceneManagement.EditorSceneManager.GetActiveScene());
                 }
-            else
-                foreach (var av in avatars)
-                {
-                    if (!displayActive.ContainsKey(av))
-                        displayActive.Add(av, true);
-                    OnGUIAvatar(av);
-                }
+            }
             EditorGUILayout.EndScrollView();
         }
         else
@@ -329,16 +320,16 @@ public class VRC_SdkControlPanel : EditorWindow
             subject = this;
 
         if (GUIErrors.ContainsKey(subject))
-            foreach (string error in GUIErrors[subject])
+            foreach (string error in GUIErrors[subject].Where(s => !string.IsNullOrEmpty(s)))
                 EditorGUILayout.HelpBox(error, MessageType.Error);
         if (GUIWarnings.ContainsKey(subject))
-            foreach (string error in GUIWarnings[subject])
+            foreach (string error in GUIWarnings[subject].Where(s => !string.IsNullOrEmpty(s)))
                 EditorGUILayout.HelpBox(error, MessageType.Warning);
         if (GUIInfos.ContainsKey(subject))
-            foreach (string error in GUIInfos[subject])
+            foreach (string error in GUIInfos[subject].Where(s => !string.IsNullOrEmpty(s)))
                 EditorGUILayout.HelpBox(error, MessageType.Info);
         if (GUILinks.ContainsKey(subject))
-            foreach (string error in GUILinks[subject])
+            foreach (string error in GUILinks[subject].Where(s => !string.IsNullOrEmpty(s)))
                 EditorGUILayout.SelectableLabel(error);
     }
 
@@ -477,6 +468,7 @@ public class VRC_SdkControlPanel : EditorWindow
         {
             EnvConfig.ConfigurePlayerSettings();
             VRC_SdkBuilder.shouldBuildUnityPackage = false;
+            VRC.AssetExporter.CleanupUnityPackageExport();  // force unity package rebuild on next publish
             VRC_SdkBuilder.numClientsToLaunch = numClients;
             VRC_SdkBuilder.PreBuildBehaviourPackaging();
             VRC_SdkBuilder.ExportSceneResourceAndRun();
@@ -861,11 +853,11 @@ public class VRC_SdkControlPanel : EditorWindow
         int polycount;
         Bounds bounds;
         AnalyzeGeometry(avatar.gameObject, out bounds, out polycount);
-        if (polycount < 1000000)
+        if (polycount < 10000)
             OnGUIInformation(avatar, "Polygons: " + polycount);
-        else if (polycount < 1500000)
+        else if (polycount < 15000)
             OnGUIWarning(avatar, "Polygons: " + polycount + " - Please try to reduce your avatar poly count to less thatn 10k.");
-        else if (polycount < 2000000)
+        else if (polycount < 20000)
             OnGUIWarning(avatar, "Polygons: " + polycount + " - This avatar will not perform well on many systems.");
         else
             OnGUIError(avatar, "Polygons: " + polycount + " - This avatar has too many polygons. It must have less than 20k and should have less than 10k.");
@@ -936,12 +928,9 @@ public class VRC_SdkControlPanel : EditorWindow
             if (componentsToRemoveNames.Count > 0)
                 OnGUIError(avatar, "The following component types are found on the Avatar and will be removed by the client: " + string.Join(", ", componentsToRemoveNames.ToArray()));
         }
-
-        int found_count;
-        if (VRCSDK2.AvatarValidation.EnforceAudioSourceLimits(avatar.gameObject, out found_count))
+        
+        if (VRCSDK2.AvatarValidation.EnforceAudioSourceLimits(avatar.gameObject).Count > 0)
             OnGUIWarning(avatar, "Audio sources found on Avatar, they will be adjusted to safe limits, if necessary.");
-        if (found_count > 10)
-            OnGUIWarning(avatar, "You have many Audio Sources on your avatar, and so may experience audio issues.");
 
         if (avatar.gameObject.GetComponentInChildren<Camera>() != null)
             OnGUIWarning(avatar, "Cameras are removed from non-local avatars at runtime.");
@@ -949,23 +938,18 @@ public class VRC_SdkControlPanel : EditorWindow
 
     void OnGUIAvatar(VRCSDK2.VRC_AvatarDescriptor avatar)
     {
-        if (!displayActive.ContainsKey(avatar))
-            displayActive.Add(avatar, true);
-        displayActive[avatar] = EditorGUILayout.InspectorTitlebar(displayActive[avatar], avatar.gameObject);
+        EditorGUILayout.InspectorTitlebar(avatar.gameObject.activeInHierarchy, avatar.gameObject);
 
-        if (displayActive[avatar])
+        GUI.enabled = (GUIErrors.Count == 0 && checkedForIssues) || (APIUser.CurrentUser.developerType.HasValue && APIUser.CurrentUser.developerType.Value == APIUser.DeveloperType.Internal);
+        EditorGUILayout.BeginHorizontal();
+        if (GUILayout.Button("Build & Publish"))
         {
-            GUI.enabled = (GUIErrors.Count == 0 && checkedForIssues) || (APIUser.CurrentUser.developerType.HasValue && APIUser.CurrentUser.developerType.Value == APIUser.DeveloperType.Internal);
-            EditorGUILayout.BeginHorizontal();
-            if (GUILayout.Button("Build & Publish"))
-            {
-                VRC_SdkBuilder.shouldBuildUnityPackage = VRC.AccountEditorWindow.FutureProofPublishEnabled;
-                VRC_SdkBuilder.ExportAndUploadAvatarBlueprint(avatar.gameObject);
-            }
-            EditorGUILayout.EndHorizontal();
-            GUI.enabled = true;
-
-            OnGUIShowIssues(avatar);
+            VRC_SdkBuilder.shouldBuildUnityPackage = VRC.AccountEditorWindow.FutureProofPublishEnabled;
+            VRC_SdkBuilder.ExportAndUploadAvatarBlueprint(avatar.gameObject);
         }
+        EditorGUILayout.EndHorizontal();
+        GUI.enabled = true;
+
+        OnGUIShowIssues(avatar);
     }
 }
